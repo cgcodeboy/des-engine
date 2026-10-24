@@ -13,7 +13,7 @@ const (
 	clockLimit     = 0.01
 	clockBlowup    = 0.10
 	clockRampMax   = 5 * time.Minute
-	clockLineStart = 10000
+	clockLineStart = 1000
 	clockLineBatch = 1000
 	clockLineEvery = time.Second
 	clockChartW    = 960
