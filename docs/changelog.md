@@ -16,7 +16,7 @@
 - 改动范围：删除对外 `metrics` 包和 Gin 依赖，新增 `internal/pkgs/metrics`，`Snapshot.StatusJSON`、`Snapshot.Prometheus`，`example/realtime`，概要设计，详细设计第 2、6、7、8 章，README，约束。
 - 影响：不再提供 `Listen`。调用方读取快照，或把 `StatusJSON`、`Prometheus` 写进自己的服务。不兼容变更：删除对外 `metrics` 包。
 
-## 0.2.0 - 未发布
+## 0.2.0 - 2026-10-24
 
 - 改动内容：增加暂停、恢复，以及暂停后的检查点与恢复。真实模式恢复时平移墙钟起点。检查点按事件名称接回已登记的处理函数。
 - 改动范围：`engine` 的生命周期、`Event.Payload`、`Handle`、`Pause`、`Resume`、`Checkpoint`、`Restore`，概要设计第 3、4、5、6 章，详细设计第 3、8 章，README。

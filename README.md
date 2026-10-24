@@ -7,28 +7,39 @@
 <p align="center">按 1 毫秒推进的离散事件仿真引擎。嵌在其他 Go 程序里用。</p>
 
 <p align="center">
-  <a href="#这是什么">这是什么</a>
+  <a href="#核心能力">核心能力</a>
   ·
-  <a href="#快速开始">快速开始</a>
+  <a href="#des">DES</a>
+  ·
+  <a href="#devs">DEVS</a>
+  ·
+  <a href="#墙钟">墙钟</a>
+  ·
+  <a href="#暂停与恢复">暂停与恢复</a>
+  ·
+  <a href="#检查点">检查点</a>
+  ·
+  <a href="#指标">指标</a>
   ·
   <a href="#示例">示例</a>
-  ·
-  <a href="#观测">观测</a>
   ·
   <a href="#基准测试">基准测试</a>
   ·
   <a href="#文档">文档</a>
 </p>
 
-| 能力 | 说明 |
-| --- | --- |
-| 时钟 | 固定 1 ms。空毫秒跳过。默认对齐墙钟，滞后则追赶 |
-| 插入 | `AddEvent` 用绝对时间，`AddFuture` 用相对延迟。同一毫秒可以链式触发，过去的事件会被拒绝 |
-| 内核 | 一个协程按顺序执行。处理函数不做 IO |
-| 耦合 | 可选。模型用端口连接，处理时间由模型自己算。不使用时事件循环不经过这层 |
-| 暂停 | 当前毫秒排空后停住。真实模式下，恢复会把墙钟起点往后推 |
-| 检查点 | 暂停后取出字节。另一台引擎按事件名称接回处理函数 |
-| 观测 | 慢事件、异步日志，以及 `Snapshot`。要不要做成服务由接入方决定 |
+## 核心能力
+
+两种运行方式共用同一台引擎、同一条事件循环。不创建协调器时，循环里只有调用方排入的事件。
+
+| 能力 | 入口 | 用法 |
+| --- | --- | --- |
+| [DES](#des) | `NewEngine`、`AddEvent`、`AddFuture` | 调用方直接排事件，并在处理函数里写业务 |
+| [DEVS](#devs) | `NewCoordinator`、`Atomic` | 模型自己计算下一次到点，端口负责把输出接到输入 |
+| [墙钟](#墙钟) | `WithRealtime`、`WithOrigin`、`WithLagHandler` | 默认按墙钟对齐；关掉之后尽快跑完 |
+| [暂停与恢复](#暂停与恢复) | `Pause`、`Resume` | 当前毫秒排空后停住，再从原处继续 |
+| [检查点](#检查点) | `Handle`、`Checkpoint`、`Restore` | 暂停后取出字节，另一台引擎按名称接回 |
+| [指标](#指标) | `Snapshot`、`StatusJSON`、`Prometheus` | 库返回正文。接入方自己写服务 |
 
 ## 这是什么
 
@@ -44,7 +55,7 @@
 
 des-engine 负责仿真时钟和事件执行。网络模型、排队规则和业务状态由调用方写在处理函数里。
 
-处理函数在同一个协程里顺序执行，不会并行。处理函数和滞后回调不持有引擎锁，因此不能调用 `Stop` 或 `Wait`，也不能做日志、网络或磁盘 IO。需要留下结果时，写到调用方自己的内存里。
+处理函数在同一个协程里顺序执行。处理函数和滞后回调不持有引擎锁，不能调用 `Stop`、`Wait`、`Pause`、`Resume`、`Checkpoint`，也不能做日志、网络或磁盘 IO。需要留下结果时，写到调用方自己的内存里。
 
 步长和慢事件阈值都固定为 1 毫秒，不能配置。状态只存在于进程内存。
 
@@ -70,9 +81,9 @@ go get github.com/cgcodeboy/des-engine
 import "github.com/cgcodeboy/des-engine/engine"
 ```
 
-把模型接成一条线时，使用同一包里的 `engine.NewCoordinator`。
+## DES
 
-## 快速开始
+DES 由调用方决定每个事件的仿真时刻。`AddEvent` 用绝对毫秒，`AddFuture` 用相对延迟。处理函数、排队和服务时间都写在调用方自己的代码里。
 
 下面的程序在启动前排入一个 20 毫秒后触发的事件。默认开着真实模式，所以它会等到相应的墙钟时刻。队列空了以后引擎退出。
 
@@ -116,9 +127,9 @@ func main() {
 }
 ```
 
-处理函数通过带缓冲的通道把仿真时间交出去，避免在引擎协程里阻塞。
+处理函数通过带缓冲的通道把仿真时间交出去，避免在引擎协程里阻塞。处理函数和滞后回调不持有引擎锁，不能调用 `Stop`、`Wait`、`Pause`、`Resume`、`Checkpoint`，也不能做日志、网络或磁盘 IO。
 
-## 排入事件
+`Start` 只能调用一次，再次调用返回 `ErrStarted`。`Wait` 阻塞到事件循环结束，并且日志已经排空。`Stop` 在当前处理函数返回后退出循环。`WithExitWhenIdle(true)` 在没有事件时结束。默认会一直等到 `Stop` 或上下文取消。`WithHorizon` 不执行给定仿真时间之后的桶，等于该时刻的桶仍会执行。
 
 `AddFuture(after, ev)` 立刻返回事件标识，并在 `Now()` 加上延迟之后触发。延迟向上取整到毫秒。延迟为 0 时，如果这一毫秒正在执行，事件追加到当前队列尾部。
 
@@ -143,9 +154,88 @@ eng.Cancel(id)
 
 还没开始执行的事件可以 `Cancel`。正在执行的事件取消会返回 false。
 
-时间早于当前水位时返回 `engine.ErrPast`。名字为空、处理函数为 nil、引擎已经停止，分别返回 `ErrName`、`ErrHandler`、`ErrClosed`。`Start` 只能调用一次，再次调用返回 `ErrStarted`。
+时间早于当前水位时返回 `engine.ErrPast`。名字为空、处理函数为 nil、引擎已经停止，分别返回 `ErrName`、`ErrHandler`、`ErrClosed`。
 
-## 和墙钟对齐
+## DEVS
+
+DEVS 在同一台引擎上增加一个协调器。调用方实现 `Atomic`，用 `Add` 登记，用 `Link` 把一个模型的输出端口接到另一个模型的输入端口。协调器只向引擎插入最近的一个到点事件。服务时间和排队仍在模型里。
+
+`Advance` 返回下一次内部事件的延迟。第二个返回值为 false 时，模型等待输入。负延迟按立即到点处理。到点时先 `Output`，再 `Internal`，然后把输出送到下一跳的 `External`。`External` 的 `elapsed` 是距上一次转移的仿真时间。
+
+模型方法跑在事件循环上，限制与 DES 的处理函数相同。它们不能调用 `Inject` 或 `Add`。外部输入用根协调器的 `Inject`，它只把消息放进队列。
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"time"
+
+	"github.com/cgcodeboy/des-engine/engine"
+)
+
+type source struct{ sent bool }
+
+func (s *source) Advance() (time.Duration, bool) {
+	if s.sent {
+		return 0, false
+	}
+	return 5 * time.Millisecond, true
+}
+
+func (s *source) Output() []engine.Message {
+	return []engine.Message{{Port: "out", Payload: []byte("box")}}
+}
+
+func (s *source) Internal()                         { s.sent = true }
+func (s *source) External(time.Duration, engine.Message) {}
+
+type sink struct{ got []byte }
+
+func (s *sink) Advance() (time.Duration, bool) { return 0, false }
+func (s *sink) Output() []engine.Message       { return nil }
+func (s *sink) Internal()                      {}
+func (s *sink) External(_ time.Duration, msg engine.Message) {
+	s.got = append([]byte(nil), msg.Payload...)
+}
+
+func main() {
+	eng, err := engine.NewEngine(
+		engine.WithRealtime(false),
+		engine.WithExitWhenIdle(true),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	root, err := engine.NewCoordinator(eng)
+	if err != nil {
+		log.Fatal(err)
+	}
+	box := &sink{}
+	if err := root.Add("source", &source{}); err != nil {
+		log.Fatal(err)
+	}
+	if err := root.Add("sink", box); err != nil {
+		log.Fatal(err)
+	}
+	if err := root.Link("source", "out", "sink", "in"); err != nil {
+		log.Fatal(err)
+	}
+	if err := eng.Start(context.Background()); err != nil {
+		log.Fatal(err)
+	}
+	if err := eng.Wait(); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(box.got))
+}
+```
+
+同一毫秒有多个模型到点时，默认按登记顺序选一个。`WithSelect` 可以换成自己的选择函数。`WithOutput` 接收离开根协调器的消息，它也跑在事件循环上。`Group` 可以嵌套一层网络。到货、扫描、打包的完整时间线在 `example/line`。
+
+## 墙钟
 
 真实模式是默认行为。`WithOrigin` 指定仿真时间 0 对应的墙钟时刻，不指定就用 `Start` 的时刻。某一毫秒开始得晚了，`WithLagHandler` 会收到这一毫秒的滞后；同一毫秒只回调一次。
 
@@ -158,35 +248,127 @@ eng, err := engine.NewEngine(
 )
 ```
 
-`WithHorizon` 在到达给定仿真时间后停止。`WithSeed` 决定处理函数里 `Context.Rand()` 的随机序列，默认种子是 1。
+`WithHorizon` 在到达给定仿真时间后停止。`WithSeed` 决定处理函数里 `Context.Rand()` 的随机序列，默认种子是 1。`WithLogger` 更换异步日志的去处，省略时用 `slog.Default`。日志在另一条协程写出，事件路径上不写 IO。队列容量 4096，满了就丢弃并计入 `Snapshot.LogDropped`。`Stop` 在事件循环退出后把队列排空，最多等 2 秒。
 
-## 暂停与检查点
+## 暂停与恢复
 
-`Pause` 等当前毫秒执行完后停住，不生成检查点。`Resume` 从这里继续。真实模式下，恢复会把墙钟起点往后推，暂停的那段时间不会被追赶。
+`Pause` 等当前毫秒执行完后停住，不生成检查点。暂停期间可以继续 `AddEvent`。`Resume` 从这里继续。真实模式下，恢复会把墙钟起点往后推，暂停的那段时间不会被追赶。同一进程里这样往返即可，不需要检查点。
 
-`Checkpoint` 只能在暂停后调用，返回一份字节。引擎不保存它，调用方可以保留多份。同一进程里暂停后直接恢复，不需要检查点。
+```go
+if err := eng.Pause(); err != nil {
+	log.Fatal(err)
+}
+if _, err := eng.AddFuture(10*time.Millisecond, engine.Event{
+	Name:    "later",
+	Handler: func(engine.Context) error { return nil },
+}); err != nil {
+	log.Fatal(err)
+}
+if err := eng.Resume(); err != nil {
+	log.Fatal(err)
+}
+```
 
-进程重新拉起时，先用 `Handle` 登记同名处理函数，再 `Restore`。引擎按名称把队列接上，结果仍是暂停，然后 `Resume`。事件自己的数据放在 `Payload` 里，处理函数用 `Context.Payload` 读取。
+`Pause` 在引擎不处于运行中时返回 `ErrNotRunning`。已经暂停时再次调用返回 nil。引擎正在停止或已经停止时返回 `ErrClosed`。`Resume` 只在暂停后有效，否则返回 `ErrNotPaused`。
 
-## 观测
+## 检查点
 
-处理函数的墙钟耗时超过 1 毫秒时，引擎记一条 Warn，并保留最近 128 条慢事件。事件路径上的日志只进入队列，队列容量 4096，满了就丢弃并计数。`Stop` 会在事件循环退出后把队列排空，最多等 2 秒。
+`Checkpoint` 只能在暂停后调用，返回一份字节。引擎不保存它，调用方可以保留多份。字节里有事件名称和 `Payload`，没有处理函数。
 
-读取快照：
+进程重新拉起时，先用 `Handle` 登记同名处理函数，再 `Restore`。引擎按名称把队列接上，结果仍是暂停，然后 `Resume`。未登记的名称返回 `ErrHandlerName`。事件自己的数据用 `Context.Payload` 读取。
+
+```go
+handler := func(c engine.Context) error {
+	_ = c.Payload()
+	return nil
+}
+eng, err := engine.NewEngine(engine.WithRealtime(false))
+if err != nil {
+	log.Fatal(err)
+}
+if err := eng.Start(context.Background()); err != nil {
+	log.Fatal(err)
+}
+if err := eng.Pause(); err != nil {
+	log.Fatal(err)
+}
+if _, err := eng.AddEvent(10, engine.Event{
+	Name:    "job",
+	Payload: []byte("gamma"),
+	Handler: handler,
+}); err != nil {
+	log.Fatal(err)
+}
+data, err := eng.Checkpoint()
+if err != nil {
+	log.Fatal(err)
+}
+
+next, err := engine.NewEngine(engine.WithRealtime(false))
+if err != nil {
+	log.Fatal(err)
+}
+if err := next.Handle("job", handler); err != nil {
+	log.Fatal(err)
+}
+if err := next.Restore(context.Background(), data); err != nil {
+	log.Fatal(err)
+}
+if err := next.Resume(); err != nil {
+	log.Fatal(err)
+}
+```
+
+协调器另有自己的 `Checkpoint` 和 `Restore`。它在引擎字节之外保存每个模型的 `Persistent.Save()`、上次和下次时间。模型没有实现 `Persistent` 时，`Checkpoint` 返回 `ErrState`，不产生字节。同一进程的 `Pause` 和 `Resume` 不调用 `Persistent`。
+
+## 指标
+
+处理函数的墙钟耗时超过 1 毫秒时，引擎记一条 Warn，并在 `Snapshot.SlowEvents` 里保留最近 128 条，其中有事件名、仿真时间和耗时。`StatusJSON` 与 `Prometheus` 是同一份快照的两种正文。
+
+DES 读取引擎自己的快照，`Coupled` 为空，正文里没有 `coupled_*`。DEVS 读取协调器的快照，`Coupled` 里是原子模型数量、转发次数、到点次数、选择次数和重排次数。`des_up` 只在 `state` 为 `running` 时为 1。正文不带事件名标签。
 
 ```go
 snap := eng.Snapshot()
 body, err := snap.StatusJSON()
 text := snap.Prometheus()
+
+// 使用了协调器时改为：
+snap = root.Snapshot()
 ```
 
-`snap.State` 表示引擎是否在跑。`snap.SlowEvents` 保留最近 128 条超过 1 毫秒的处理，里面有事件名和仿真时间。`StatusJSON` 和 `Prometheus` 是同一份快照的两种正文，实现在 `internal/pkgs/metrics`，接入方引用不到那个包。接了协调器时，用 `Coordinator.Snapshot()`，`Coupled` 里是模型块数和转发次数。引擎自己的快照里 `Coupled` 为空，两种正文也不出现耦合字段。
+库不打开端口。接入方使用 `net/http` 和 `io` 写自己的服务，并自己调用 `ListenAndServe`：
 
-库不打开端口。接入方要对外提供这些数，自己写服务器，把上面的返回值写进响应。
+```go
+import (
+	"io"
+	"net/http"
+)
+
+mux := http.NewServeMux()
+mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
+	body, err := eng.Snapshot().StatusJSON()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(body)
+})
+mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	io.WriteString(w, eng.Snapshot().Prometheus())
+})
+srv := &http.Server{Addr: ":8080", Handler: mux}
+if err := srv.ListenAndServe(); err != nil {
+	log.Fatal(err)
+}
+```
+
+使用协调器时，两个处理函数都改为 `root.Snapshot()`，`Coupled` 才会填上。字段清单见详细设计第 8 章。
 
 ## 示例
 
-下面的程序各自把一种能力跑成时间线。耦合层和基准测试单独放在后面。
+`queue`、`checkpoint`、`lag`、`realtime` 是 DES。`line` 是 DEVS。基准测试单独放在后面。
 
 | 程序 | 看什么 |
 | --- | --- |
