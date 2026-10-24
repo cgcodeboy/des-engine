@@ -1,10 +1,6 @@
 // Command realtime runs one engine in realtime mode. It schedules a same-step
 // follow-up, one future event, and one handler that sleeps past the slow-event
-// threshold, then serves the metrics endpoints until interrupted.
-//
-//	GET /healthz
-//	GET /status
-//	GET /metrics
+// threshold. After interrupt it prints one Snapshot.
 package main
 
 import (
@@ -16,7 +12,6 @@ import (
 	"time"
 
 	"github.com/cgcodeboy/des-engine/engine"
-	"github.com/cgcodeboy/des-engine/metrics"
 )
 
 func main() {
@@ -29,7 +24,7 @@ func main() {
 			log.Print(line)
 		}
 	}()
-	eng, err := engine.New(
+	eng, err := engine.NewEngine(
 		engine.WithSeed(1),
 		engine.WithLagHandler(func(lag engine.Lag) {
 			seen <- fmt.Sprintf("lag step=%d lag=%s", lag.Step, lag.Lag)
@@ -41,11 +36,6 @@ func main() {
 	if err := eng.Start(ctx); err != nil {
 		log.Fatal(err)
 	}
-	go func() {
-		if err := metrics.Listen(ctx, ":9090", eng, nil); err != nil {
-			log.Print(err)
-		}
-	}()
 
 	report := func(name string) engine.Handler {
 		return func(c engine.Context) error {
@@ -80,10 +70,10 @@ func main() {
 	}); err != nil {
 		log.Fatal(err)
 	}
-	log.Print("metrics on :9090  /healthz /status /metrics")
-
 	<-ctx.Done()
 	if err := eng.Stop(); err != nil {
 		log.Fatal(err)
 	}
+	snap := eng.Snapshot()
+	log.Printf("state=%s now=%dms slow=%d", snap.State, snap.Now, snap.SlowTotal)
 }

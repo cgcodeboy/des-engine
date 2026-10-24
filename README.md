@@ -25,9 +25,10 @@
 | 时钟 | 固定 1 ms。空毫秒跳过。默认对齐墙钟，滞后则追赶 |
 | 插入 | `AddEvent` 用绝对时间，`AddFuture` 用相对延迟。同一毫秒可以链式触发，过去的事件会被拒绝 |
 | 内核 | 一个协程按顺序执行。处理函数不做 IO |
+| 耦合 | 可选。模型用端口连接，处理时间由模型自己算。不使用时事件循环不经过这层 |
 | 暂停 | 当前毫秒排空后停住。真实模式下，恢复会把墙钟起点往后推 |
 | 检查点 | 暂停后取出字节。另一台引擎按事件名称接回处理函数 |
-| 观测 | 慢事件、异步日志，以及 `/healthz`、`/status`、`/metrics` |
+| 观测 | 慢事件、异步日志，以及 `Snapshot`。要不要做成服务由接入方决定 |
 
 ## 这是什么
 
@@ -35,9 +36,9 @@
 
 默认和墙钟对齐：第 `k` 毫秒的理论时刻是 `origin + k * 1ms`。墙钟还没到，引擎就等到那个时刻。墙钟已经过了，引擎立刻执行这一毫秒，并通过回调和日志交出滞后。时间不会倒退。
 
-事件循环是一个协程。日志在另一条协程里写出，指标服务用 Gin 提供 HTTP。`engine` 不引用 `metrics`，指标只读快照，不把状态写回引擎。
+事件循环是一个协程。日志在另一条协程里写出。计数和慢事件通过 `Snapshot` 读取，库本身不监听端口。
 
-仿真内核只使用 Go 标准库。指标路由使用 Gin。
+仿真内核只使用 Go 标准库。
 
 ## 边界
 
@@ -63,14 +64,13 @@ des-engine 负责仿真时钟和事件执行。网络模型、排队规则和业
 go get github.com/cgcodeboy/des-engine
 ```
 
-对外只有两个包：
+对外只有 `engine`：
 
 ```go
-import (
-	"github.com/cgcodeboy/des-engine/engine"
-	"github.com/cgcodeboy/des-engine/metrics"
-)
+import "github.com/cgcodeboy/des-engine/engine"
 ```
+
+把模型接成一条线时，使用同一包里的 `engine.NewCoordinator`。
 
 ## 快速开始
 
@@ -89,7 +89,7 @@ import (
 )
 
 func main() {
-	eng, err := engine.New(engine.WithExitWhenIdle(true))
+	eng, err := engine.NewEngine(engine.WithExitWhenIdle(true))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -152,7 +152,7 @@ eng.Cancel(id)
 要测量处理能力，或者让仿真尽快跑完，关掉真实模式：
 
 ```go
-eng, err := engine.New(
+eng, err := engine.NewEngine(
 	engine.WithRealtime(false),
 	engine.WithExitWhenIdle(true),
 )
@@ -172,30 +172,28 @@ eng, err := engine.New(
 
 处理函数的墙钟耗时超过 1 毫秒时，引擎记一条 Warn，并保留最近 128 条慢事件。事件路径上的日志只进入队列，队列容量 4096，满了就丢弃并计数。`Stop` 会在事件循环退出后把队列排空，最多等 2 秒。
 
-指标服务和引擎分开启动：
+读取快照：
 
 ```go
-go metrics.Listen(ctx, ":9090", eng, nil)
+snap := eng.Snapshot()
+body, err := snap.StatusJSON()
+text := snap.Prometheus()
 ```
 
-| 方法 | 路径 | 内容 |
-| --- | --- | --- |
-| GET | `/healthz` | 指标服务在监听时返回 `ok`。引擎已经停止也仍然返回成功 |
-| GET | `/status` | JSON 快照。`slow_events` 是最近的慢事件 |
-| GET | `/metrics` | Prometheus 文本。慢事件只有累计次数 `des_slow_events_total`，不按事件名拆标签 |
+`snap.State` 表示引擎是否在跑。`snap.SlowEvents` 保留最近 128 条超过 1 毫秒的处理，里面有事件名和仿真时间。`StatusJSON` 和 `Prometheus` 是同一份快照的两种正文，实现在 `internal/pkgs/metrics`，接入方引用不到那个包。接了协调器时，用 `Coordinator.Snapshot()`，`Coupled` 里是模型块数和转发次数。引擎自己的快照里 `Coupled` 为空，两种正文也不出现耦合字段。
 
-`/healthz` 表示指标端口是否可用，不表示仿真仍在运行。仿真是否在跑看 `/status` 的 `state`，或 Prometheus 的 `des_up`。
+库不打开端口。接入方要对外提供这些数，自己写服务器，把上面的返回值写进响应。
 
 ## 示例
 
-四个短程序各自把一种能力跑成时间线。基准测试单独放在后面。
+下面的程序各自把一种能力跑成时间线。耦合层和基准测试单独放在后面。
 
 | 程序 | 看什么 |
 | --- | --- |
 | `example/queue` | 单服务台。同一毫秒先插入的先执行，服务结束的同一毫秒接上下一件。取消和过期插入不会发生，时间上限之后的事件不执行 |
 | `example/checkpoint` | 暂停后直接恢复。再暂停时取出检查点，另一台引擎按名称读到原来的 `Payload` |
 | `example/lag` | 墙钟起点放在过去。已经错过的桶立即追赶，还没到的桶继续等 |
-| `example/realtime` | 真实模式、同毫秒追加、慢事件，以及 `:9090` 上的指标 |
+| `example/realtime` | 真实模式、同毫秒追加、慢事件。结束后用 `Snapshot` 读取状态 |
 
 队列在示例自己的处理函数里，不是引擎内置的资源库。
 
@@ -245,7 +243,27 @@ go run ./example/lag
 go run ./example/realtime
 ```
 
-标准错误上会看到 `0 ms tick`、`0 ms follow`、`20 ms later`、`30 ms slow`。进程监听 `:9090`，中断信号会停掉引擎。`/status` 的 `slow_events` 里有 `slow`。
+标准错误上会看到 `0 ms tick`、`0 ms follow`、`20 ms later`、`30 ms slow`。中断后停止引擎，并打印快照里的状态、仿真时间和慢事件次数。
+
+耦合层不改事件循环。到货、扫描、打包各自决定处理时间，完成和开始由端口接在同一毫秒：
+
+```bash
+go run ./example/line
+```
+
+```text
+到货口、扫描台、打包台靠端口连接。处理时间由包裹自己决定。
+   0 ms  到货 小包
+   0 ms  开始扫描 小包
+   2 ms  完成扫描 小包
+   2 ms  开始打包 小包
+   4 ms  完成打包 小包
+   5 ms  到货 大包
+   5 ms  开始扫描 大包
+   9 ms  完成扫描 大包
+   9 ms  开始打包 大包
+  12 ms  完成打包 大包
+```
 
 ## 测试
 

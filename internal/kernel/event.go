@@ -1,4 +1,4 @@
-package engine
+package kernel
 
 import (
 	"errors"
@@ -58,7 +58,8 @@ type SlowEvent struct {
 }
 
 // Snapshot is a point-in-time copy of engine counters and recent slow events.
-// LogDropped counts only the engine logger, not the metrics logger.
+// LogDropped counts records dropped by this engine's log queue.
+// Callers that want an HTTP view read this value and serve it themselves.
 type Snapshot struct {
 	State           string
 	Now             Time
@@ -77,6 +78,20 @@ type Snapshot struct {
 	Uptime          time.Duration
 	EventRate       float64
 	SlowEvents      []SlowEvent
+	// Coupled is set by the optional coupling layer.
+	// The engine itself leaves it nil.
+	Coupled *CoupledStats
+}
+
+// CoupledStats counts the optional coupling layer.
+// Models is how many atomic models are registered.
+// The other fields are cumulative totals.
+type CoupledStats struct {
+	Models      uint64
+	Messages    uint64
+	Due         uint64
+	Selects     uint64
+	Reschedules uint64
 }
 
 // Context is the engine view passed to the handler that is running.

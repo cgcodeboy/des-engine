@@ -1,4 +1,4 @@
-package engine
+package kernel
 
 const slowCap = 128
 

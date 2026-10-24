@@ -18,7 +18,7 @@ const service = 4 * time.Millisecond
 
 func main() {
 	var shop shop
-	eng, err := engine.New(
+	eng, err := engine.NewEngine(
 		engine.WithRealtime(false),
 		engine.WithExitWhenIdle(true),
 		engine.WithHorizon(20),

@@ -92,7 +92,7 @@ func main() {
 
 func runCase(spec caseSpec, measure, warm time.Duration) (result, error) {
 	runtime.GC()
-	eng, err := engine.New(
+	eng, err := engine.NewEngine(
 		engine.WithRealtime(false),
 		engine.WithExitWhenIdle(false),
 		engine.WithSeed(1),

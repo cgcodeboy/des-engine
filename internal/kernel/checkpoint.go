@@ -1,4 +1,4 @@
-package engine
+package kernel
 
 import (
 	"bytes"
@@ -10,7 +10,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/cgcodeboy/des-engine/internal/bucket"
+	"github.com/cgcodeboy/des-engine/internal/pkgs/bucket"
 )
 
 const checkpointVersion = 1

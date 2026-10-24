@@ -2,6 +2,20 @@
 
 本文件只记录重要功能迭代和修复。版本号遵循语义化版本。
 
+## 0.3.0 - 未发布
+
+- 改动内容：对外创建引擎的函数由 `New` 改为 `NewEngine`，与 `NewCoordinator` 区分。
+- 改动范围：`engine.NewEngine`，示例，README，概要设计第 3 章，详细设计第 3 章。
+- 影响：调用方把 `engine.New` 改为 `engine.NewEngine`。内部事件循环的构造函数仍为 `New`。不兼容变更：删除对外 `engine.New`。
+
+- 改动内容：增加可选耦合层。原子模型用端口连接，处理时间由模型自己计算。直接使用引擎的路径保持不变。
+- 改动范围：`engine.Coordinator`，`engine.Snapshot` 的可空耦合计数，`example/line`，概要设计第 2、3、4 章，详细设计第 2、7、8、9 章，README。
+- 影响：不创建协调器时，事件循环不变，`Engine.Snapshot` 的 `Coupled` 为空。创建协调器后，到点、转发和重排计入原有引擎事件次数，`Coordinator.Snapshot` 另有耦合计数。不兼容变更：无。
+
+- 改动内容：去掉指标 HTTP 服务。状态 JSON 和 Prometheus 文本改由快照方法返回，实现放在 `internal/pkgs/metrics`。接入方自己决定要不要监听端口。
+- 改动范围：删除对外 `metrics` 包和 Gin 依赖，新增 `internal/pkgs/metrics`，`Snapshot.StatusJSON`、`Snapshot.Prometheus`，`example/realtime`，概要设计，详细设计第 2、6、7、8 章，README，约束。
+- 影响：不再提供 `Listen`。调用方读取快照，或把 `StatusJSON`、`Prometheus` 写进自己的服务。不兼容变更：删除对外 `metrics` 包。
+
 ## 0.2.0 - 未发布
 
 - 改动内容：增加暂停、恢复，以及暂停后的检查点与恢复。真实模式恢复时平移墙钟起点。检查点按事件名称接回已登记的处理函数。

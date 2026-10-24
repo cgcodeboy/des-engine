@@ -79,7 +79,7 @@ func main() {
 }
 
 func newEngine() (*engine.Engine, error) {
-	return engine.New(
+	return engine.NewEngine(
 		engine.WithRealtime(false),
 		engine.WithExitWhenIdle(false),
 		engine.WithLogger(slog.New(slog.DiscardHandler)),

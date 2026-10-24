@@ -10,7 +10,7 @@ alwaysApply: true
 ## 代码风格
 
 - 语言版本保持 Go 1.25。提交前用 `gofmt` 格式化。
-- 仿真内核、`internal/bucket` 和 `internal/asynclog` 限于 Go 标准库。`metrics` 的 HTTP 路由使用 `github.com/gin-gonic/gin`。除此之外，新增第三方依赖属于框架变更，按「框架结构」处理。
+- 仿真内核、`internal/pkgs/bucket` 和 `internal/pkgs/asynclog` 限于 Go 标准库。库不提供 HTTP。除此之外，新增第三方依赖属于框架变更，按「框架结构」处理。
 - 导出标识提供英文 godoc，使用完整句子。设计文档使用中文。
 - 错误字符串使用小写，不以标点结尾。哨兵错误命名为 `Err` 加原因，例如 `ErrPast`。
 - 业务失败通过返回值传递。不用 `panic` 表达可预期失败。
@@ -23,7 +23,7 @@ alwaysApply: true
 
 新名字表达职责，不重复包名中已经包含的信息，并与现有公开接口同一风格。
 
-包名是单个小写单词，不含下划线、连字符和大写字母。当前包名为 `engine`、`metrics`、`bucket`、`asynclog`。
+包名是单个小写单词，不含下划线、连字符和大写字母。当前包名为 `engine`、`kernel`、`coupling`、`bucket`、`asynclog`、`metrics`。
 
 文件：
 
@@ -57,11 +57,14 @@ alwaysApply: true
 
 ## 目录与文件
 
-允许的顶层目录只有 `engine/`、`metrics/`、`internal/`、`example/`、`docs/`、`.cursor/`。
+允许的顶层目录只有 `engine/`、`internal/`、`example/`、`docs/`、`.cursor/`。
 
-- `engine/`：对外仿真内核。
-- `metrics/`：对外指标与 HTTP。
-- `internal/`：不对外的实现。当前只有 `bucket/` 和 `asynclog/`。
+- `engine/`：对外仿真内核。观测通过 `Snapshot` 交给调用方。
+- `internal/`：不对外的实现。下层是 `kernel`，上面是两个互不引用的应用，技术包在 `pkgs`。
+  - `kernel`：事件循环、锁、水位、检查点。不引用 `application`。
+  - `application/des`：直接按事件使用的应用。只转发到下层 `kernel`。
+  - `application/devs`：协调器应用。只通过下层 `kernel` 的公开方法插入和取消事件，不引用 `application/des`。
+  - `pkgs/bucket`、`pkgs/asynclog`、`pkgs/metrics`：未来桶、异步日志、快照文本。`metrics` 不监听端口。
 - `example/`：可运行示例。每个子目录一个 `main` 包。
 - `docs/`：概要设计、详细设计和变更记录。
 - `.cursor/`：Cursor 规则。
@@ -70,7 +73,7 @@ alwaysApply: true
 
 - 评估已经写明新目录的职责，以及为什么现有目录不能容纳。
 - 详细设计第 2 章先登记该目录，归档时与代码一致。
-- 不创建 `pkg/`、`src/`、`util/`、`common/`、`helper/`、`helpers/`、`model/`、`models/`。
+- 不在仓库根目录创建 `pkg/`、`src/`、`util/`、`common/`、`helper/`、`helpers/`、`model/`、`models/`。根目录上的这些名字不说明分层。技术包放在 `internal/pkgs/`，事件循环放在 `internal/kernel/`，两个应用放在 `internal/application/des/` 和 `internal/application/devs/`。
 - 不在仓库根目录新增 Go 源文件。根目录保留 `go.mod`、`README.md`、`LICENSE` 和上述目录。
 - 一个包只位于一个目录。
 
@@ -78,13 +81,14 @@ alwaysApply: true
 
 改变下列任何一条，都要在评估中单独立项，并先更新详细设计第 2 章，再改代码。
 
-- 对外包只有 `engine` 和 `metrics`。
-- `engine` 不引用 `metrics`。`metrics` 只通过快照读取引擎。
-- `example` 只引用 `engine` 和 `metrics`，不引用 `internal`。
-- 事件循环、引擎锁、水位和当前步长队列位于 `engine`。
-- `internal/bucket` 不加锁，由 `engine` 在持锁时调用。
-- 异步日志位于 `internal/asynclog`。引擎和指标服务各自持有实例，不把指标服务的丢弃数写回引擎。
-- 不把事件循环拆进新的公开包，不把 HTTP 路由并入 `engine`。
+- 对外包只有 `engine`。
+- `example` 只引用 `engine`，不引用 `internal`。
+- `engine` 只重新导出对外类型、构造函数和错误，并且只引用两个应用，不引用下层 `internal/kernel`。
+- 事件循环、引擎锁、水位和当前步长队列位于 `internal/kernel`。`internal/kernel` 不引用 `application`。
+- `internal/application/des` 与 `internal/application/devs` 互不引用。二者都只调用下层 `internal/kernel`。协调器不接触未来桶。
+- `internal/pkgs/bucket` 不加锁，由 `internal/kernel` 在持锁时调用。
+- 异步日志位于 `internal/pkgs/asynclog`。`internal/kernel` 持有自己的实例。
+- 不把事件循环拆进新的公开包。库不监听端口，调用方读取 `Snapshot` 后自行决定是否提供服务。
 
 允许在既有包内增加文件，但必须符合文件命名规则。不为单次功能复制一套平行目录。
 

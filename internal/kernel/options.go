@@ -1,4 +1,4 @@
-package engine
+package kernel
 
 import (
 	"log/slog"

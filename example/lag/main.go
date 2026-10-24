@@ -23,7 +23,7 @@ func main() {
 	note := func(text string) {
 		lines = append(lines, fmt.Sprintf("墙钟 %3d ms  %s", time.Since(started).Milliseconds(), text))
 	}
-	eng, err := engine.New(
+	eng, err := engine.NewEngine(
 		engine.WithOrigin(origin),
 		engine.WithExitWhenIdle(true),
 		engine.WithLogger(slog.New(slog.DiscardHandler)),
