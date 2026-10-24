@@ -24,10 +24,12 @@ type ID uint64
 type Handler func(Context) error
 
 // Event is one named handler submitted to the engine.
-// Name must be non-empty and Handler must be non-nil.
+// Name must be non-empty. Handler may be nil when that name was registered
+// with Handle. Payload is event data owned by the engine after submission.
 type Event struct {
 	Name    string
 	Handler Handler
+	Payload []byte
 }
 
 // Lag is how late a step started relative to its theoretical wall time.
@@ -39,7 +41,8 @@ type Lag struct {
 }
 
 // LagHandler is called once for each step that skips its realtime wait.
-// It runs on the event loop and must not perform I/O or call Stop or Wait.
+// It runs on the event loop and must not perform I/O or call Stop, Wait,
+// Pause, Resume, or Checkpoint.
 type LagHandler func(Lag)
 
 // SlowEvent is one handler whose wall-clock duration exceeded SlowThreshold.
@@ -85,6 +88,7 @@ type Context interface {
 	EventAt() Time
 	ID() ID
 	Name() string
+	Payload() []byte
 	AddEvent(at Time, ev Event) (ID, error)
 	AddFuture(after time.Duration, ev Event) (ID, error)
 	Cancel(id ID) bool
@@ -101,22 +105,32 @@ var (
 	ErrPast = errors.New("event time is before the current step")
 	// ErrClosed is returned when the engine is stopping or has stopped.
 	ErrClosed = errors.New("engine is closed")
-	// ErrStarted is returned when Start is called after the engine has left
-	// its initial state.
+	// ErrStarted is returned when Start or Restore is called after the engine
+	// has left its initial state.
 	ErrStarted = errors.New("engine already started")
+	// ErrNotRunning is returned when Pause is called and the engine is not running.
+	ErrNotRunning = errors.New("engine is not running")
+	// ErrNotPaused is returned when Resume or Checkpoint is used and the engine is not paused.
+	ErrNotPaused = errors.New("engine is not paused")
+	// ErrHandlerName is returned when a checkpoint event name has no registered handler.
+	ErrHandlerName = errors.New("handler is not registered")
+	// ErrCheckpoint is returned when checkpoint bytes cannot be read.
+	ErrCheckpoint = errors.New("invalid checkpoint")
 )
 
 type runCtx struct {
-	e    *Engine
-	id   ID
-	name string
-	at   Time
+	e       *Engine
+	id      ID
+	name    string
+	at      Time
+	payload []byte
 }
 
 func (c *runCtx) Now() Time        { return c.e.Now() }
 func (c *runCtx) EventAt() Time    { return c.at }
 func (c *runCtx) ID() ID           { return c.id }
 func (c *runCtx) Name() string     { return c.name }
+func (c *runCtx) Payload() []byte  { return c.payload }
 func (c *runCtx) Rand() *rand.Rand { return c.e.rng }
 
 func (c *runCtx) AddEvent(at Time, ev Event) (ID, error) {

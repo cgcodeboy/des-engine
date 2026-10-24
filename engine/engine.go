@@ -18,6 +18,8 @@ type runState int
 const (
 	stateCreated runState = iota
 	stateRunning
+	statePausing
+	statePaused
 	stateStopping
 	stateStopped
 )
@@ -28,6 +30,10 @@ func (s runState) String() string {
 		return "created"
 	case stateRunning:
 		return "running"
+	case statePausing:
+		return "pausing"
+	case statePaused:
+		return "paused"
 	case stateStopping:
 		return "stopping"
 	case stateStopped:
@@ -44,6 +50,7 @@ type scheduled struct {
 	seq      uint64
 	h        Handler
 	canceled bool
+	payload  []byte
 }
 
 // Engine runs events in millisecond buckets on one goroutine.
@@ -75,7 +82,11 @@ type Engine struct {
 	horizonSet   bool
 	clock        clock
 	startedAt    time.Time
+	pausedAt     time.Time
+	pauseReq     bool
+	pcg          *rand.PCG
 	rng          *rand.Rand
+	handlers     map[string]Handler
 
 	slow      []SlowEvent
 	slowTotal uint64
@@ -109,10 +120,12 @@ func New(opts ...Option) (*Engine, error) {
 	if clk == nil {
 		clk = wallClock{}
 	}
+	pcg := rand.NewPCG(uint64(cfg.seed), uint64(cfg.seed))
 	e := &Engine{
 		state:        stateCreated,
 		executing:    -1,
 		byID:         make(map[ID]*scheduled),
+		handlers:     make(map[string]Handler),
 		realtime:     cfg.realtime,
 		origin:       cfg.origin,
 		originSet:    cfg.originSet,
@@ -121,7 +134,8 @@ func New(opts ...Option) (*Engine, error) {
 		horizon:      cfg.horizon,
 		horizonSet:   cfg.horizonSet,
 		clock:        clk,
-		rng:          rand.New(rand.NewPCG(uint64(cfg.seed), uint64(cfg.seed))),
+		pcg:          pcg,
+		rng:          rand.New(pcg),
 		logs:         logs,
 		log:          slog.New(logs.Handler()),
 	}
@@ -160,10 +174,10 @@ func (e *Engine) Start(ctx context.Context) error {
 
 // Stop requests shutdown and waits until the loop exits and the log
 // queue finishes flushing. Stop before Start, and a second Stop, return nil.
-// A handler error or panic is returned to the caller.
+// Stop also ends a paused engine. A handler error or panic is returned to the caller.
 func (e *Engine) Stop() error {
 	e.mu.Lock()
-	if e.state != stateRunning {
+	if e.state != stateRunning && e.state != statePausing && e.state != statePaused {
 		e.mu.Unlock()
 		return nil
 	}
@@ -176,6 +190,67 @@ func (e *Engine) Stop() error {
 	e.mu.Unlock()
 	<-done
 	return e.loopErr
+}
+
+// Pause parks the loop after the current millisecond drains.
+// Pause while already paused returns nil. Handlers must not call Pause.
+func (e *Engine) Pause() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for {
+		switch e.state {
+		case statePaused:
+			return nil
+		case stateRunning, statePausing:
+			if e.state == stateRunning {
+				e.state = statePausing
+				e.pauseReq = true
+				e.cond.Broadcast()
+			}
+			e.cond.Wait()
+		case stateStopping, stateStopped:
+			return ErrClosed
+		default:
+			return ErrNotRunning
+		}
+	}
+}
+
+// Resume continues a paused engine.
+// In realtime mode the origin moves forward by the wall time spent paused.
+func (e *Engine) Resume() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state != statePaused {
+		return ErrNotPaused
+	}
+	if e.realtime && !e.pausedAt.IsZero() {
+		e.origin = e.origin.Add(e.clock.Now().Sub(e.pausedAt))
+	}
+	e.pausedAt = time.Time{}
+	e.pauseReq = false
+	e.state = stateRunning
+	e.cond.Broadcast()
+	e.log.Info("engine resumed")
+	return nil
+}
+
+// Handle registers h under name. Restore uses this table to attach handlers.
+// A later registration of the same name replaces the previous function.
+func (e *Engine) Handle(name string, h Handler) error {
+	if name == "" {
+		return ErrName
+	}
+	if h == nil {
+		return ErrHandler
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.handlers == nil {
+		e.handlers = make(map[string]Handler)
+	}
+	e.handlers[name] = h
+	return nil
 }
 
 // Wait blocks until the engine has stopped and returns the same error as Stop.
@@ -301,7 +376,11 @@ func (e *Engine) addLocked(at Time, ev Event) (ID, error) {
 	if ev.Name == "" {
 		return 0, ErrName
 	}
-	if ev.Handler == nil {
+	h := ev.Handler
+	if h == nil {
+		h = e.handlers[ev.Name]
+	}
+	if h == nil {
 		return 0, ErrHandler
 	}
 	if at < 0 || at < e.nowBound() {
@@ -311,11 +390,12 @@ func (e *Engine) addLocked(at Time, ev Event) (ID, error) {
 	e.seq++
 	e.nextID++
 	s := &scheduled{
-		id:   e.nextID,
-		name: ev.Name,
-		at:   at,
-		seq:  e.seq,
-		h:    ev.Handler,
+		id:      e.nextID,
+		name:    ev.Name,
+		at:      at,
+		seq:     e.seq,
+		h:       h,
+		payload: append([]byte(nil), ev.Payload...),
 	}
 	e.byID[s.id] = s
 	if e.executing >= 0 && at == Time(e.executing) {
@@ -341,7 +421,7 @@ func (e *Engine) watch(ctx context.Context) {
 	select {
 	case <-ctx.Done():
 		e.mu.Lock()
-		if e.state == stateRunning {
+		if e.state == stateRunning || e.state == statePausing || e.state == statePaused {
 			e.stopReq = true
 			if e.stopWhy == "" {
 				e.stopWhy = "context canceled"
@@ -367,6 +447,11 @@ func (e *Engine) loop() {
 			if e.executing >= 0 {
 				e.watermark = e.executing + 1
 				e.executing = -1
+			}
+			if e.pauseReq || e.state == statePaused {
+				e.enterPausedLocked()
+				e.cond.Wait()
+				continue
 			}
 			next, ok := e.buckets.Next(e.watermark)
 			if !ok {
@@ -444,11 +529,11 @@ func (e *Engine) loop() {
 			continue
 		}
 		delete(e.byID, ev.id)
-		h, id, name, at := ev.h, ev.id, ev.name, ev.at
+		h, id, name, at, payload := ev.h, ev.id, ev.name, ev.at, ev.payload
 		e.mu.Unlock()
 
 		started := e.clock.Now()
-		err, panicVal := callHandler(h, &runCtx{e: e, id: id, name: name, at: at})
+		err, panicVal := callHandler(h, &runCtx{e: e, id: id, name: name, at: at, payload: payload})
 		elapsed := e.clock.Now().Sub(started)
 		if elapsed > SlowThreshold {
 			finished := e.clock.Now()
@@ -509,6 +594,17 @@ func (e *Engine) beginStop(reason string) {
 			e.stopWhy = "stop"
 		}
 	}
+	e.cond.Broadcast()
+}
+
+func (e *Engine) enterPausedLocked() {
+	if e.state != statePaused {
+		e.pausedAt = e.clock.Now()
+		e.state = statePaused
+		e.pauseReq = false
+		e.log.Info("engine paused", slog.Int64("sim_time_ms", e.watermark))
+	}
+	e.cond.Broadcast()
 }
 
 func (e *Engine) finish() {

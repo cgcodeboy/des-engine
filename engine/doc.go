@@ -12,5 +12,10 @@
 //
 // The event loop is one goroutine. Handlers and lag callbacks run there
 // without the engine lock. They must not perform I/O, and they must not call
-// Stop or Wait.
+// Stop, Wait, Pause, Resume, or Checkpoint.
+//
+// Pause parks the loop after the current millisecond drains. Resume continues
+// it. Checkpoint copies a paused engine into bytes owned by the caller.
+// Restore loads those bytes into an engine whose handlers were registered
+// with Handle, and leaves that engine paused.
 package engine
