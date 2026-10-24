@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="360" viewBox="0 0 960 360">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<rect x="16" y="16" width="928" height="328" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+<text x="36" y="44" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#1f2328">偏差占运行时间的比值</text>
+<text x="36" y="64" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">横线是 1%。高于横线记为不准</text>
+<line x1="72" y1="312.0" x2="936.0" y2="312.0" stroke="#eaeef2"/>
+<text x="64" y="316.0" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">0.00%</text>
+<line x1="72" y1="250.0" x2="936.0" y2="250.0" stroke="#eaeef2"/>
+<text x="64" y="254.0" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">2.94%</text>
+<line x1="72" y1="188.0" x2="936.0" y2="188.0" stroke="#eaeef2"/>
+<text x="64" y="192.0" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">5.88%</text>
+<line x1="72" y1="126.0" x2="936.0" y2="126.0" stroke="#eaeef2"/>
+<text x="64" y="130.0" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">8.82%</text>
+<line x1="72" y1="64.0" x2="936.0" y2="64.0" stroke="#eaeef2"/>
+<text x="64" y="68.0" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">11.76%</text>
+<line x1="72" y1="312.0" x2="936.0" y2="312.0" stroke="#d0d7de"/>
+<line x1="72" y1="290.9" x2="936.0" y2="290.9" stroke="#cf222e" stroke-dasharray="4 4"/>
+<text x="908.0" y="284.9" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#cf222e">1%</text>
+<polyline fill="none" stroke="#0969da" stroke-width="2" points="129.9,249.8 187.5,222.6 245.1,245.1 302.5,252.9 360.2,257.2 417.6,225.5 475.4,205.1 533.0,193.4 590.5,182.3 648.1,173.9 705.7,150.0 763.1,132.5 820.6,118.9 878.5,107.1 936.0,96.3"/>
+<line x1="72" y1="338" x2="90" y2="338" stroke="#0969da" stroke-width="2"/>
+<text x="96" y="342" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#1f2328">偏差比值</text>
+<text x="72" y="316" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">0</text>
+<text x="936.0" y="316" text-anchor="end" font-family="PingFang SC, -apple-system, Segoe UI, Helvetica, Arial, sans-serif" font-size="12" fill="#656d76">3.000746083s</text>
+</svg>

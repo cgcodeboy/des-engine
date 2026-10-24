@@ -33,6 +33,10 @@ func writeReport(rows []result, window time.Duration) error {
 }
 
 func writeChartPNG(svg, pngPath string) error {
+	return renderPNG(svg, pngPath, chartWidth, chartHeight())
+}
+
+func renderPNG(svg, pngPath string, width, height int) error {
 	chrome, err := chromeBin()
 	if err != nil {
 		return err
@@ -53,7 +57,7 @@ func writeChartPNG(svg, pngPath string) error {
 		"--hide-scrollbars",
 		"--force-device-scale-factor=2",
 		"--screenshot="+pngPath,
-		fmt.Sprintf("--window-size=%d,%d", chartWidth, chartHeight()),
+		fmt.Sprintf("--window-size=%d,%d", width, height),
 		"file://"+htmlPath,
 	)
 	out, err := cmd.CombinedOutput()
@@ -115,14 +119,14 @@ func reportSection(rows []result, window time.Duration) string {
 	var b strings.Builder
 	groupA := filterGroup(rows, "A")
 	groupB := filterGroup(rows, "B")
-	b.WriteString("## 基准测试\n\n")
+	b.WriteString("### 吞吐\n\n")
 	b.WriteString("下面的数字来自一次完整运行。真实模式是关闭的，所以测到的是事件循环的处理能力，而不是睡眠。\n\n")
 	fmt.Fprintf(&b, "每种场景测量 %s，场景内各档平分。场景 A 每档 %s，场景 B 每档 %s。每档开始前另有 %s 预热，预热不计入结果。事件源在整个窗口内持续插入，触发时刻在 0 到 10 秒仿真时间之间均匀随机。每个来源最多同时有 %d 个未完成事件。复杂度是处理函数中的整数运算次数。\n\n", prettyDuration(window), prettyDuration(caseWindow(window, len(groupA))), prettyDuration(caseWindow(window, len(groupB))), prettyDuration(warmup), inFlight)
 	fmt.Fprintf(&b, "运行环境是 %s/%s，%d 个逻辑 CPU。CPU 列是测量窗口内进程用户态加内核态时间除以墙钟，单位是核。堆峰值是窗口内 Go `HeapInuse` 的最大值。MaxRSS 是进程启动以来的驻留高水位，后面的档不会低于前面的档。\n\n", runtime.GOOS, runtime.GOARCH, runtime.NumCPU())
 	b.WriteString("![每秒完成事件数](example/bench/result.png)\n\n")
-	fmt.Fprintf(&b, "### 场景 A：中等复杂度（%d 次运算）\n\n", workMedium)
+	fmt.Fprintf(&b, "#### 场景 A：中等复杂度（%d 次运算）\n\n", workMedium)
 	writeTable(&b, groupA, "来源数")
-	b.WriteString("\n### 场景 B：1000 个来源\n\n")
+	b.WriteString("\n#### 场景 B：1000 个来源\n\n")
 	writeTable(&b, groupB, "复杂度")
 	b.WriteString("\n事件循环只有一个协程。来源变多不会让处理函数并行，多出来的开销主要在插入时的锁上。复杂度升高后，时间花在处理函数里，吞吐下降。\n\n")
 	fmt.Fprintf(&b, "`-duration` 是每种场景的总测量时间。不传则是 %s。\n\n", prettyDuration(window))

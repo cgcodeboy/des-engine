@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -46,11 +47,31 @@ type result struct {
 }
 
 func main() {
-	duration := flag.Duration("duration", 10*time.Minute, "measurement window for each scenario")
+	clock := flag.Bool("clock", false, "ramp packing lines until realtime drift reaches 10 percent")
+	robust := flag.Bool("robust", false, "measure recovery after a few handlers that run far longer than 1ms")
+	duration := flag.Duration("duration", 10*time.Minute, "measurement window for each throughput scenario")
 	flag.Parse()
 	if *duration <= 0 {
 		fmt.Fprintln(os.Stderr, "duration must be positive")
 		os.Exit(1)
+	}
+	if *clock && *robust {
+		fmt.Fprintln(os.Stderr, "choose one of -clock or -robust")
+		os.Exit(1)
+	}
+	if *robust {
+		if err := runRobust(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if *clock {
+		if err := runClock(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
 	}
 	groups := [][]caseSpec{
 		{
@@ -88,6 +109,80 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func runClock() error {
+	eng, err := engine.NewEngine(
+		engine.WithRealtime(true),
+		engine.WithExitWhenIdle(false),
+		engine.WithLogger(slog.New(slog.DiscardHandler)),
+	)
+	if err != nil {
+		return err
+	}
+	var sink atomic.Uint64
+	catalog := parcelCatalog()
+	stock := parcelStock(catalog)
+	if err := eng.Start(context.Background()); err != nil {
+		return err
+	}
+	lines := 0
+	addLines := func(n int) error {
+		for i := 0; i < n; i++ {
+			if err := addLine(eng, catalog, stock, time.Duration(i%8)*time.Millisecond, &sink); err != nil {
+				return err
+			}
+			lines++
+		}
+		return nil
+	}
+	if err := addLines(clockLineStart); err != nil {
+		return err
+	}
+	started := time.Now()
+	var points []clockPoint
+	collect := func() clockPoint {
+		p := sampleClock(started, time.Duration(eng.Now())*time.Millisecond)
+		p.Sources = lines
+		points = append(points, p)
+		return p
+	}
+	pulse := time.NewTicker(200 * time.Millisecond)
+	defer pulse.Stop()
+	next := time.NewTimer(clockLineEvery)
+	defer next.Stop()
+	cap := time.NewTimer(clockRampMax)
+	defer cap.Stop()
+	fmt.Fprintf(os.Stderr, "clock ramp from %d lines, +%d every %s, stop at %.0f%% or %s\n", lines, clockLineBatch, clockLineEvery, clockBlowup*100, clockRampMax)
+wait:
+	for {
+		select {
+		case <-pulse.C:
+			p := collect()
+			if p.Ratio >= clockBlowup {
+				break wait
+			}
+		case <-next.C:
+			if err := addLines(clockLineBatch); err != nil {
+				return err
+			}
+			p := sampleClock(started, time.Duration(eng.Now())*time.Millisecond)
+			fmt.Fprintf(os.Stderr, "  lines=%d ratio=%.3f%%\n", lines, p.Ratio*100)
+			next.Reset(clockLineEvery)
+		case <-cap.C:
+			collect()
+			break wait
+		}
+	}
+	if err := eng.Stop(); err != nil && !errors.Is(err, engine.ErrClosed) {
+		return err
+	}
+	if sink.Load() == 0 {
+		return fmt.Errorf("packing lines did not run")
+	}
+	last := points[len(points)-1]
+	fmt.Fprintf(os.Stderr, "  线条 %d  运行 %s  仿真 %s  偏差 %s  比值 %.4f%%\n", last.Sources, clockDur(last.Wall), clockDur(last.Sim), clockDur(last.Drift), last.Ratio*100)
+	return writeClockReport([]clockSeries{{Label: "偏差比值", Sources: last.Sources, Points: points}}, last.Wall)
 }
 
 func runCase(spec caseSpec, measure, warm time.Duration) (result, error) {
