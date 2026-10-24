@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -22,10 +23,16 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	seen := make(chan string, 8)
+	go func() {
+		for line := range seen {
+			log.Print(line)
+		}
+	}()
 	eng, err := engine.New(
 		engine.WithSeed(1),
 		engine.WithLagHandler(func(lag engine.Lag) {
-			log.Printf("lag step=%d lag=%s", lag.Step, lag.Lag)
+			seen <- fmt.Sprintf("lag step=%d lag=%s", lag.Step, lag.Lag)
 		}),
 	)
 	if err != nil {
@@ -40,10 +47,18 @@ func main() {
 		}
 	}()
 
+	report := func(name string) engine.Handler {
+		return func(c engine.Context) error {
+			seen <- fmt.Sprintf("%d ms  %s", c.Now(), name)
+			return nil
+		}
+	}
+
 	if _, err := eng.AddEvent(0, engine.Event{
 		Name: "tick",
 		Handler: func(c engine.Context) error {
-			_, err := c.AddFuture(0, engine.Event{Name: "follow", Handler: func(engine.Context) error { return nil }})
+			seen <- fmt.Sprintf("%d ms  tick", c.Now())
+			_, err := c.AddFuture(0, engine.Event{Name: "follow", Handler: report("follow")})
 			return err
 		},
 	}); err != nil {
@@ -51,19 +66,21 @@ func main() {
 	}
 	if _, err := eng.AddFuture(20*time.Millisecond, engine.Event{
 		Name:    "later",
-		Handler: func(engine.Context) error { return nil },
+		Handler: report("later"),
 	}); err != nil {
 		log.Fatal(err)
 	}
 	if _, err := eng.AddFuture(30*time.Millisecond, engine.Event{
 		Name: "slow",
-		Handler: func(engine.Context) error {
+		Handler: func(c engine.Context) error {
+			seen <- fmt.Sprintf("%d ms  slow", c.Now())
 			time.Sleep(2 * time.Millisecond)
 			return nil
 		},
 	}); err != nil {
 		log.Fatal(err)
 	}
+	log.Print("metrics on :9090  /healthz /status /metrics")
 
 	<-ctx.Done()
 	if err := eng.Stop(); err != nil {
