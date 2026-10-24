@@ -31,6 +31,10 @@
 - 改动范围：`engine`、`metrics`、`internal/bucket`、`internal/asynclog`、`example/realtime`、`go.mod`、`README.md`。`internal/bucket` 使用泛型保存调度节点。
 - 影响：外部可以引用 `engine` 和 `metrics`。没有既有调用方。处理函数在引擎锁外执行；日志在独立协程写出。不兼容变更：无。
 
+- 改动内容：指标 HTTP 改为 Gin 路由。`/healthz`、`/status`、`/metrics` 的路径和响应保持不变。
+- 改动范围：`metrics`、`go.mod`、`go.sum`、概要设计、详细设计第 6 章和第 8.2 节、README。
+- 影响：引用 `metrics` 的程序会带上 Gin 及其依赖。`engine` 仍只使用标准库，也不引用 `metrics`。`Listen` 的签名不变。不兼容变更：无。
+
 - 改动内容：增加可设定测量时长的基准程序。默认每种场景 10 分钟，场景内各档平分，比较不同事件源数量和不同处理复杂度下的吞吐、CPU 与内存。
 - 改动范围：`example/bench`、`README.md`、详细设计第 2 章。
 - 影响：不改变引擎公开接口。基准关闭真实模式，并用每来源最多 8 个未完成事件限制队列增长。不兼容变更：无。

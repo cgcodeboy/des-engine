@@ -10,7 +10,7 @@ alwaysApply: true
 ## 代码风格
 
 - 语言版本保持 Go 1.25。提交前用 `gofmt` 格式化。
-- 依赖限于 Go 标准库。新增第三方依赖属于框架变更，按「框架结构」处理。
+- 仿真内核、`internal/bucket` 和 `internal/asynclog` 限于 Go 标准库。`metrics` 的 HTTP 路由使用 `github.com/gin-gonic/gin`。除此之外，新增第三方依赖属于框架变更，按「框架结构」处理。
 - 导出标识提供英文 godoc，使用完整句子。设计文档使用中文。
 - 错误字符串使用小写，不以标点结尾。哨兵错误命名为 `Err` 加原因，例如 `ErrPast`。
 - 业务失败通过返回值传递。不用 `panic` 表达可预期失败。

@@ -46,7 +46,7 @@ type scheduled struct {
 	canceled bool
 }
 
-// Engine runs events in millisecond buckets.
+// Engine runs events in millisecond buckets on one goroutine.
 type Engine struct {
 	mu         sync.Mutex
 	cond       *sync.Cond
@@ -93,7 +93,8 @@ type Engine struct {
 	ctx  context.Context
 }
 
-// New builds an engine. The default mode is realtime with seed 1.
+// New builds an engine. Realtime mode is on and the random seed is 1
+// unless options change them.
 func New(opts ...Option) (*Engine, error) {
 	cfg := config{realtime: true, seed: 1}
 	for _, opt := range opts {
@@ -128,7 +129,9 @@ func New(opts ...Option) (*Engine, error) {
 	return e, nil
 }
 
-// Start runs the event loop in the background.
+// Start launches the event loop. A nil context is rejected.
+// Calling Start again returns ErrStarted.
+// Canceling ctx requests the same shutdown as Stop.
 func (e *Engine) Start(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("nil context")
@@ -155,7 +158,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop requests shutdown and waits until the loop and log flush finish.
+// Stop requests shutdown and waits until the loop exits and the log
+// queue finishes flushing. Stop before Start, and a second Stop, return nil.
+// A handler error or panic is returned to the caller.
 func (e *Engine) Stop() error {
 	e.mu.Lock()
 	if e.state != stateRunning {
@@ -173,7 +178,8 @@ func (e *Engine) Stop() error {
 	return e.loopErr
 }
 
-// Wait blocks until the engine has stopped.
+// Wait blocks until the engine has stopped and returns the same error as Stop.
+// Wait before Start returns nil.
 func (e *Engine) Wait() error {
 	e.mu.Lock()
 	if e.state == stateCreated {
@@ -186,22 +192,26 @@ func (e *Engine) Wait() error {
 	return e.loopErr
 }
 
-// Now reports the current simulation time in milliseconds.
+// Now returns the executing millisecond, or the watermark when no step
+// is executing. Before Start, Now is 0.
 func (e *Engine) Now() Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.nowLocked()
 }
 
-// AddEvent inserts an event at an absolute simulation time.
+// AddEvent inserts ev at absolute simulation time at.
+// A timestamp equal to the executing millisecond is appended to that step.
+// An earlier timestamp returns ErrPast.
 func (e *Engine) AddEvent(at Time, ev Event) (ID, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.addLocked(at, ev)
 }
 
-// AddFuture accepts ev immediately and runs it after the given delay.
-// Positive delays are rounded up to whole milliseconds.
+// AddFuture accepts ev immediately and schedules it at Now plus after,
+// rounded up to a whole millisecond. A zero delay appends to the executing
+// step. A negative delay returns ErrPast.
 func (e *Engine) AddFuture(after time.Duration, ev Event) (ID, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -212,7 +222,8 @@ func (e *Engine) AddFuture(after time.Duration, ev Event) (ID, error) {
 	return e.addLocked(e.nowLocked()+millis(after), ev)
 }
 
-// Cancel marks a not-yet-running event so the loop skips it.
+// Cancel marks a queued event so the loop skips it.
+// It returns false when id is unknown or the event has already started.
 func (e *Engine) Cancel(id ID) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -225,7 +236,7 @@ func (e *Engine) Cancel(id ID) bool {
 	return true
 }
 
-// Snapshot copies the current counters and slow-event ring.
+// Snapshot copies the counters and the recent slow-event ring.
 func (e *Engine) Snapshot() Snapshot {
 	e.mu.Lock()
 	defer e.mu.Unlock()

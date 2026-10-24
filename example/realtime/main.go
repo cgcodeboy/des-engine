@@ -1,5 +1,6 @@
-// Command realtime shows a 1ms realtime engine, a same-step follow-up event,
-// AddFuture, one slow handler, and the metrics endpoints.
+// Command realtime runs one engine in realtime mode. It schedules a same-step
+// follow-up, one future event, and one handler that sleeps past the slow-event
+// threshold, then serves the metrics endpoints until interrupted.
 //
 //	GET /healthz
 //	GET /status

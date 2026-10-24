@@ -1,10 +1,16 @@
-// Package engine is a fixed-step discrete event simulation kernel.
+// Package engine is a fixed-step discrete-event simulation kernel.
 //
-// Simulation time is an integer number of milliseconds. One bucket is one
-// millisecond. Realtime mode aligns bucket k to origin + k milliseconds.
-// AddFuture accepts an event and a delay, then runs it at the future
-// millisecond produced by rounding the delay up.
+// Time is a whole number of milliseconds, and each millisecond is one bucket.
+// Empty buckets are skipped. In the default realtime mode, bucket k waits
+// until origin plus k milliseconds. If the wall clock is already past that
+// instant, the bucket runs immediately and the lag is reported.
 //
-// Handlers and lag callbacks run on the event loop. They must not perform
-// I/O, and they must not call Stop or Wait.
+// AddEvent schedules an absolute timestamp. AddFuture schedules a delay from
+// Now, rounded up to a whole millisecond. A zero delay, or a timestamp equal
+// to the millisecond currently executing, is appended to that step. A
+// timestamp before the watermark is rejected.
+//
+// The event loop is one goroutine. Handlers and lag callbacks run there
+// without the engine lock. They must not perform I/O, and they must not call
+// Stop or Wait.
 package engine

@@ -22,12 +22,14 @@ type config struct {
 	clock        clock
 }
 
-// WithRealtime selects wall-clock alignment. The default is realtime.
+// WithRealtime selects wall-clock alignment. The default is on.
+// When off, a due bucket runs immediately instead of waiting.
 func WithRealtime(on bool) Option {
 	return func(c *config) { c.realtime = on }
 }
 
-// WithOrigin sets the wall-clock time of simulation time zero.
+// WithOrigin sets the wall-clock instant of simulation time zero.
+// If it is omitted, Start captures the clock when the loop begins.
 func WithOrigin(origin time.Time) Option {
 	return func(c *config) {
 		c.origin = origin
@@ -35,13 +37,15 @@ func WithOrigin(origin time.Time) Option {
 	}
 }
 
-// WithLagHandler receives one callback for each step that starts late.
+// WithLagHandler sets the callback for steps that miss their wall-clock target.
+// Each such step is reported once.
 func WithLagHandler(h LagHandler) Option {
 	return func(c *config) { c.onLag = h }
 }
 
-// WithLogger sets the sink that receives asynchronous engine logs.
-// A nil logger uses slog.Default.
+// WithLogger sets the sink for asynchronous engine logs.
+// A nil logger, or omitting this option, uses slog.Default.
+// Records are queued; the event loop does not write them itself.
 func WithLogger(logger *slog.Logger) Option {
 	return func(c *config) {
 		c.logger = logger
@@ -49,17 +53,19 @@ func WithLogger(logger *slog.Logger) Option {
 	}
 }
 
-// WithSeed sets the deterministic random seed. The default seed is 1.
+// WithSeed sets the seed for Context.Rand. The default seed is 1.
 func WithSeed(seed int64) Option {
 	return func(c *config) { c.seed = seed }
 }
 
-// WithExitWhenIdle stops the engine when no events remain.
+// WithExitWhenIdle stops the engine once no events remain.
+// The default is to wait until Stop or context cancellation.
 func WithExitWhenIdle(exit bool) Option {
 	return func(c *config) { c.exitWhenIdle = exit }
 }
 
-// WithHorizon stops the engine before executing a step later than until.
+// WithHorizon stops the engine when the next step is later than until.
+// A step equal to until still runs.
 func WithHorizon(until Time) Option {
 	return func(c *config) {
 		c.horizon = until

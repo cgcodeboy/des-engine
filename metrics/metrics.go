@@ -1,4 +1,8 @@
-// Package metrics serves engine snapshots over HTTP.
+// Package metrics serves engine snapshots over HTTP with Gin.
+//
+// GET /healthz reports whether this server is listening, not whether the
+// engine is still running. GET /status returns a JSON snapshot.
+// GET /metrics returns Prometheus text without event-name labels.
 package metrics
 
 import (

@@ -1,4 +1,6 @@
-// Package asynclog queues slog records and writes them on a background goroutine.
+// Package asynclog queues slog records and writes them on one background goroutine.
+// Sending a record does not wait for the write. The queue holds 4096 records;
+// a record that does not fit is dropped and counted.
 package asynclog
 
 import (
@@ -14,12 +16,12 @@ const (
 	closeTimeout = 2 * time.Second
 )
 
-// Logger is a non-blocking slog front end.
+// Logger is a non-blocking slog front end shared by WithAttrs and WithGroup.
 type Logger struct {
 	h *handler
 }
 
-// New starts a writer goroutine. A nil sink uses slog.Default.
+// New starts the writer goroutine. A nil sink uses slog.Default.
 func New(sink slog.Handler) *Logger {
 	if sink == nil {
 		sink = slog.Default().Handler()
@@ -33,17 +35,18 @@ func New(sink slog.Handler) *Logger {
 	return &Logger{h: h}
 }
 
-// Handler returns the slog.Handler that enqueues records.
+// Handler returns the slog.Handler that enqueues records without blocking.
 func (l *Logger) Handler() slog.Handler {
 	return l.h
 }
 
-// Dropped returns how many records were discarded.
+// Dropped returns how many records were discarded because the queue was full or closed.
 func (l *Logger) Dropped() uint64 {
 	return l.h.s.dropped.Load()
 }
 
-// Close stops new records and waits up to 2 seconds for queued records to flush.
+// Close rejects further records and waits up to 2 seconds for the queue to drain.
+// Records still queued at the deadline are counted as dropped.
 func (l *Logger) Close() {
 	s := l.h.s
 	s.mu.Lock()

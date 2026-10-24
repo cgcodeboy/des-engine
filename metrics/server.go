@@ -9,17 +9,21 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"github.com/cgcodeboy/des-engine/engine"
 	"github.com/cgcodeboy/des-engine/internal/asynclog"
 )
 
-// Source is an engine snapshot provider.
+// Source supplies a consistent engine snapshot for each request.
 type Source interface {
 	Snapshot() engine.Snapshot
 }
 
-// Listen serves /healthz, /status, and /metrics until ctx is canceled.
-// A nil logger uses slog.Default. The logger is always written asynchronously.
+// Listen serves GET /healthz, /status, and /metrics until ctx is canceled.
+// A nil logger uses slog.Default. Log records are queued and written
+// asynchronously. Canceling ctx stops this server even if the engine is
+// still running.
 func Listen(ctx context.Context, addr string, src Source, logger *slog.Logger) error {
 	if ctx == nil {
 		return errors.New("nil context")
@@ -63,19 +67,16 @@ func Listen(ctx context.Context, addr string, src Source, logger *slog.Logger) e
 }
 
 func newMux(src Source) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
+	router := gin.New()
+	router.GET("/healthz", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain; charset=utf-8", []byte("ok"))
 	})
-	mux.HandleFunc("GET /status", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		enc := json.NewEncoder(w)
-		_ = enc.Encode(toStatus(src.Snapshot()))
+	router.GET("/status", func(c *gin.Context) {
+		c.Header("Content-Type", "application/json")
+		_ = json.NewEncoder(c.Writer).Encode(toStatus(src.Snapshot()))
 	})
-	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
-		_, _ = w.Write([]byte(prometheus(src.Snapshot())))
+	router.GET("/metrics", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain; version=0.0.4; charset=utf-8", []byte(prometheus(src.Snapshot())))
 	})
-	return mux
+	return router
 }
