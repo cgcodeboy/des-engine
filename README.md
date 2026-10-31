@@ -1,5 +1,9 @@
 <p align="center">
-  <img src="docs/banner.png" alt="des-engine：离散事件仿真" width="920">
+  <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <img src="docs/logo.svg" alt="des-engine：离散事件仿真" width="68%">
 </p>
 
 # des-engine
